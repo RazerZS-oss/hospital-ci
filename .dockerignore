@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+.DS_Store
+writable/logs/*
+writable/cache/*
+writable/session/*
+writable/uploads/*
+!writable/.gitkeep

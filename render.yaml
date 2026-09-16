@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ci-hospital
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: CI_ENVIRONMENT
+        value: production
+      - key: app.baseURL
+        sync: false
+      - key: database.default.hostname
+        sync: false
+      - key: database.default.database
+        value: postgres
+      - key: database.default.username
+        value: postgres
+      - key: database.default.password
+        sync: false
+      - key: database.default.DBDriver
+        value: Postgre
+      - key: database.default.port
+        value: "5432"
+      - key: database.default.schema
+        value: public
