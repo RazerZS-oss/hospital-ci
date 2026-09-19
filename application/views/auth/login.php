@@ -28,7 +28,7 @@
             <div class="alert"><?= $this->session->flashdata('error') ?></div>
         <?php endif; ?>
 
-        <form action="<?= base_url('auth/login') ?>" method="post">
+        <?= form_open('auth/login') ?>
             <div class="form-group">
                 <label>Staff Username</label>
                 <input type="text" name="username" placeholder="admin" required autofocus>
@@ -38,7 +38,7 @@
                 <input type="password" name="password" placeholder="admin123" required>
             </div>
             <button type="submit">Log In to Hospital System</button>
-        </form>
+        <?= form_close() ?>
 
         <div class="demo-creds">
             <strong>Default Accounts:</strong><br>

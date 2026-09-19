@@ -91,7 +91,7 @@ $config['charset'] = 'UTF-8';
 | setting this variable to TRUE (boolean).  See the user guide for details.
 |
 */
-$config['enable_hooks'] = FALSE;
+$config['enable_hooks'] = TRUE;
 
 /*
 |--------------------------------------------------------------------------
@@ -372,37 +372,26 @@ $config['encryption_key'] = 'ci3_hospital_secret_key_9876543210';
 | except for 'cookie_prefix' and 'cookie_httponly', which are ignored here.
 |
 */
-$config['sess_driver'] = 'files';
-$config['sess_cookie_name'] = 'ci_session';
-$config['sess_samesite'] = 'Lax';
-$config['sess_expiration'] = 7200;
-$config['sess_save_path'] = sys_get_temp_dir();
-$config['sess_match_ip'] = FALSE;
-$config['sess_time_to_update'] = 300;
-$config['sess_regenerate_destroy'] = FALSE;
+$config['sess_driver']             = 'database';
+$config['sess_cookie_name']        = 'hmis_sess_id';
+$config['sess_samesite']           = 'Strict';
+$config['sess_expiration']         = 900; // 15-minute HIPAA idle timeout
+$config['sess_save_path']          = 'ci_sessions';
+$config['sess_match_ip']           = TRUE; // Prevent session hijacking across network nodes
+$config['sess_time_to_update']     = 300; // Regenerate session ID every 5 minutes
+$config['sess_regenerate_destroy'] = TRUE;
 
 /*
 |--------------------------------------------------------------------------
 | Cookie Related Variables
 |--------------------------------------------------------------------------
-|
-| 'cookie_prefix'   = Set a cookie name prefix if you need to avoid collisions
-| 'cookie_domain'   = Set to .your-domain.com for site-wide cookies
-| 'cookie_path'     = Typically will be a forward slash
-| 'cookie_secure'   = Cookie will only be set if a secure HTTPS connection exists.
-| 'cookie_httponly' = Cookie will only be accessible via HTTP(S) (no javascript)
-| 'cookie_samesite' = Cookie's samesite attribute (Lax, Strict or None)
-|
-| Note: These settings (with the exception of 'cookie_prefix' and
-|       'cookie_httponly') will also affect sessions.
-|
 */
-$config['cookie_prefix']	= '';
-$config['cookie_domain']	= '';
-$config['cookie_path']		= '/';
-$config['cookie_secure']	= FALSE;
-$config['cookie_httponly'] 	= FALSE;
-$config['cookie_samesite'] 	= 'Lax';
+$config['cookie_prefix']   = (ENVIRONMENT === 'production') ? '__Secure-' : '';
+$config['cookie_domain']   = '';
+$config['cookie_path']     = '/';
+$config['cookie_secure']   = (ENVIRONMENT === 'production' || (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on'));
+$config['cookie_httponly'] = TRUE;
+$config['cookie_samesite'] = 'Strict';
 
 /*
 |--------------------------------------------------------------------------
@@ -446,12 +435,16 @@ $config['global_xss_filtering'] = FALSE;
 | 'csrf_regenerate' = Regenerate token on every submission
 | 'csrf_exclude_uris' = Array of URIs which ignore CSRF checks
 */
-$config['csrf_protection'] = FALSE;
-$config['csrf_token_name'] = 'csrf_test_name';
-$config['csrf_cookie_name'] = 'csrf_cookie_name';
-$config['csrf_expire'] = 7200;
-$config['csrf_regenerate'] = TRUE;
-$config['csrf_exclude_uris'] = array();
+$config['csrf_protection']   = TRUE;
+$config['csrf_token_name']   = 'hmis_csrf_token';
+$config['csrf_cookie_name']  = 'hmis_csrf_cookie';
+$config['csrf_expire']       = 7200;
+$config['csrf_regenerate']   = TRUE;
+$config['csrf_exclude_uris'] = array(
+    'api/.*',
+    'queue/.*',
+    'emr/.*'
+);
 
 /*
 |--------------------------------------------------------------------------

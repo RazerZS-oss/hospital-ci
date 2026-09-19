@@ -50,11 +50,15 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 |		my-controller/my-method	-> my_controller/my_method
 */
 $route['default_controller'] = 'auth';
-$route['login'] = 'auth/login';
+$route['login'] = 'auth';
 $route['logout'] = 'auth/logout';
 $route['dashboard'] = 'dashboard';
 $route['patients'] = 'pasien';
 $route['patients/create'] = 'pasien/create';
 $route['doctors'] = 'dokter';
+$route['queue/register'] = 'registration/polyclinic/register_queue';
+$route['queue/monitor']  = 'registration/polyclinic/queue_monitor';
+$route['emr/data']       = 'emr/data';
+$route['emr/save']       = 'emr/save';
 $route['404_override'] = '';
 $route['translate_uri_dashes'] = FALSE;

@@ -13,6 +13,14 @@ chmod -R 777 /var/www/html/writable /var/www/html/application/cache /var/www/htm
 echo "Starting PHP-FPM..."
 php-fpm -D
 
+# Register and start Alpine crond for background CLI tasks
+if [ -f /var/www/html/crontab.txt ]; then
+    echo "Registering application crontab..."
+    crontab /var/www/html/crontab.txt
+    echo "Starting Alpine crond daemon..."
+    crond -b -L /var/log/cron.log
+fi
+
 # Start Nginx in foreground on configured port
 echo "Starting Nginx on port ${PORT}..."
 exec nginx -g "daemon off;"

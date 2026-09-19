@@ -41,7 +41,7 @@
 
         <div class="card">
             <h3 style="margin-top: 0; margin-bottom: 15px;">➕ Register New Patient (CI3 Model Test)</h3>
-            <form action="<?= base_url('patients/create') ?>" method="post">
+            <?= form_open('patients/create') ?>
                 <div class="form-row">
                     <div>
                         <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:4px;">Full Name</label>
@@ -64,7 +64,7 @@
                         <button type="submit">Save Patient</button>
                     </div>
                 </div>
-            </form>
+            <?= form_close() ?>
         </div>
 
         <div class="card">

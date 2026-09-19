@@ -1,0 +1,8 @@
+# ==============================================================================
+# Central Hospital Management Information System (HMIS) - Crontab
+# ==============================================================================
+# Runs surgery and clinical pre-op reminders daily at 07:00 AM
+0 7 * * * php /var/www/html/index.php cli/surgery_reminder send_reminders >> /var/log/cron_surgery.log 2>&1
+
+# Inactivity session cleanup (every 30 minutes)
+*/30 * * * * php /var/www/html/index.php cli/maintenance session_gc >> /var/log/cron_gc.log 2>&1

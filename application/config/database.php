@@ -75,10 +75,10 @@ $query_builder = TRUE;
 
 $db['default'] = array(
 	'dsn'	=> '',
-	'hostname' => 'db',
-	'username' => 'ci_user',
-	'password' => 'ci_password',
-	'database' => 'ci_hospital',
+	'hostname' => getenv('DB_HOST') ?: 'db',
+	'username' => getenv('DB_USER') ?: 'ci_user',
+	'password' => getenv('DB_PASSWORD') ?: 'ci_password',
+	'database' => getenv('DB_NAME') ?: 'ci_hospital',
 	'dbdriver' => 'postgre',
 	'dbprefix' => '',
 	'pconnect' => FALSE,
@@ -93,5 +93,5 @@ $db['default'] = array(
 	'stricton' => FALSE,
 	'failover' => array(),
 	'save_queries' => TRUE,
-	'port' => 5432
+	'port' => (int)(getenv('DB_PORT') ?: 5432)
 );
