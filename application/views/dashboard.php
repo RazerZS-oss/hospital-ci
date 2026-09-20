@@ -32,6 +32,7 @@
             <a href="<?= base_url('dashboard') ?>" class="active">Dashboard</a>
             <a href="<?= base_url('patients') ?>">Patients</a>
             <a href="<?= base_url('doctors') ?>">Doctors</a>
+            <a href="<?= base_url('emr') ?>">EMR Queue</a>
             <a href="<?= base_url('auth/logout') ?>" style="color: #f87171;">Logout (<?= htmlspecialchars($user_name) ?>)</a>
         </div>
     </div>
@@ -56,6 +57,14 @@
                 <div class="stat-number"><?= $total_doctors ?></div>
                 <div style="margin-top: 15px;">
                     <a href="<?= base_url('doctors') ?>" class="btn btn-primary" style="background: #10b981; font-size: 12px; padding: 6px 12px;">View Doctors &rarr;</a>
+                </div>
+            </div>
+
+            <div class="stat-card" style="border-left-color: #8b5cf6;">
+                <div class="stat-title">Clinical Workspace</div>
+                <div class="stat-number">EMR</div>
+                <div style="margin-top: 15px;">
+                    <a href="<?= base_url('emr') ?>" class="btn btn-primary" style="background: #8b5cf6; font-size: 12px; padding: 6px 12px;">Doctor Queue &rarr;</a>
                 </div>
             </div>
         </div>
