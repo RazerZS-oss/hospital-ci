@@ -33,6 +33,7 @@ class Emr extends MY_Controller {
         // 1. Identify active doctor (from session id/user_id, doctor_id, or doctors table)
         $user_id   = $this->session->userdata('id');
         $user_name = $this->session->userdata('name');
+        $user_role = strtolower((string)$this->session->userdata('role'));
         $doctor    = null;
 
         if ($this->session->userdata('doctor_id')) {
@@ -54,7 +55,8 @@ class Emr extends MY_Controller {
             $doctor = $this->db->order_by('id', 'ASC')->get('doctors')->row_array();
         }
 
-        if ($doctor && !$this->session->userdata('doctor_id')) {
+        // Only persist doctor_id in session for actual doctors, avoiding polluting admin sessions
+        if ($doctor && $user_role === 'doctor' && !$this->session->userdata('doctor_id')) {
             $this->session->set_userdata('doctor_id', $doctor['id']);
         }
 
@@ -143,12 +145,13 @@ class Emr extends MY_Controller {
             }
         }
 
-        if (empty($visit_id)) {
+        // Validate UUID format before database query
+        if (empty($visit_id) || !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $visit_id)) {
             $this->output
                 ->set_status_header(400)
                 ->set_output(json_encode([
                     'status'  => 'error',
-                    'message' => 'Visit ID is required.'
+                    'message' => 'Invalid UUID format for visit ID.'
                 ], JSON_UNESCAPED_UNICODE));
             return;
         }
@@ -164,24 +167,23 @@ class Emr extends MY_Controller {
             return;
         }
 
-        if ($visit['queue_status'] === 'COMPLETED') {
+        // Only visits in WAITING queue status can be transitioned to CALLED
+        if ($visit['queue_status'] !== 'WAITING') {
             $this->output
                 ->set_status_header(409)
                 ->set_output(json_encode([
                     'status'  => 'conflict',
-                    'message' => 'Patient consultation is already completed.'
+                    'message' => 'Patient cannot be called. Current queue status: ' . $visit['queue_status']
                 ], JSON_UNESCAPED_UNICODE));
             return;
         }
 
-        if ($visit['queue_status'] === 'WAITING') {
-            $this->db->where('id', $visit_id)
-                ->where('queue_status', 'WAITING')
-                ->update('visits', [
-                    'queue_status' => 'CALLED',
-                    'updated_at'   => date('Y-m-d H:i:sP')
-                ]);
-        }
+        $this->db->where('id', $visit_id)
+            ->where('queue_status', 'WAITING')
+            ->update('visits', [
+                'queue_status' => 'CALLED',
+                'updated_at'   => date('Y-m-d H:i:sP')
+            ]);
 
         $this->output
             ->set_status_header(200)
@@ -204,8 +206,9 @@ class Emr extends MY_Controller {
         }
 
         $visit_id = trim($visit_id);
-        if (empty($visit_id)) {
-            $this->session->set_flashdata('error', 'Visit ID is required for consultation.');
+        // Validate UUID format before database query
+        if (empty($visit_id) || !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $visit_id)) {
+            $this->session->set_flashdata('error', 'Invalid visit identifier format.');
             redirect('emr');
             return;
         }
@@ -247,10 +250,31 @@ class Emr extends MY_Controller {
             $visit['queue_status'] = 'IN_CONSULTATION';
         }
 
-        // 5. Fetch separate patient and doctor entities for clean view binding
-        $patient    = $this->db->get_where('patients', ['id' => $visit['patient_id']])->row_array();
-        $doctor     = $this->db->get_where('doctors', ['id' => $visit['doctor_id']])->row_array();
-        $polyclinic = $this->db->get_where('polyclinics', ['id' => $visit['polyclinic_id']])->row_array();
+        // 5. Structure view entities from joined query without redundant database lookups
+        $patient = [
+            'id'                    => $visit['patient_id'],
+            'name'                  => $visit['name'],
+            'full_name'             => $visit['patient_name'],
+            'medical_record_number' => $visit['medical_record_number'],
+            'date_of_birth'         => $visit['date_of_birth'],
+            'gender'                => $visit['gender'],
+            'blood_type'            => $visit['blood_type'],
+            'address'               => $visit['address'],
+            'phone_number'          => $visit['phone_number'],
+        ];
+
+        $doctor = [
+            'id'             => $visit['doctor_id'],
+            'name'           => $visit['doctor_name'],
+            'full_name'      => $visit['doctor_name'],
+            'specialization' => $visit['doctor_specialization'],
+        ];
+
+        $polyclinic = [
+            'id'   => $visit['polyclinic_id'],
+            'name' => $visit['polyclinic_name'],
+            'code' => $visit['polyclinic_code'],
+        ];
 
         // 6. Fetch active ICD-10 diagnostic codes
         $icd10_list = $this->db->select('code, description_en, category')
