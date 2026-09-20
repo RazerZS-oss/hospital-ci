@@ -18,8 +18,10 @@ class Rbac_hook {
      * Requests matching these controllers/methods bypass authentication and RBAC checks.
      */
     private array $public_routes = [
-        'auth' => ['*'],
+        'auth'                    => ['*'],
         'registration/polyclinic' => ['register_queue', 'queue_monitor'],
+        'patient_portal'          => ['*'],
+        'api/v1/patient_portal'   => ['*'],
     ];
 
     /**
