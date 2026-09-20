@@ -259,12 +259,110 @@ def test_datatables_serverside():
         assert data_s["recordsFiltered"] >= 1
         print(f"   -> DataTables ILIKE search ('Budi') matches: {data_s['recordsFiltered']}")
 
-# 11. Test EMR AJAX Submission & Digital Record Locking
-def test_emr_ajax_save():
+# 11. Test Doctor EMR Queue Page
+def test_doctor_emr_queue_page():
+    req = urllib.request.Request(f"{BASE_URL}/emr")
+    with doc_opener.open(req) as resp:
+        html = resp.read().decode('utf-8')
+        assert resp.status == 200, f"Expected 200, got {resp.status}"
+        assert "Antrean Poliklinik" in html or "Polyclinic Queue" in html, "Polyclinic Queue title missing"
+        assert "dr. Budi Santoso" in html or "drbudi" in html or "Poliklinik" in html
+        print(f"   -> Doctor EMR Queue Page rendered successfully with live table.")
+
+# 12. Test Doctor EMR Patient Call Action (AJAX)
+def test_doctor_emr_call_patient():
+    # Find or create a WAITING visit
+    cmd = [
+        "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
+        "-c", "SELECT id FROM visits WHERE queue_status = 'WAITING' ORDER BY queue_number ASC LIMIT 1;"
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    waiting_id = res.stdout.strip()
+    if not waiting_id:
+        test_queue_api()
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        waiting_id = res.stdout.strip()
+
+    assert waiting_id, "No WAITING visit available for call test"
+
+    # Test calling patient with invalid UUID (returns 400)
+    req_bad = urllib.request.Request(
+        f"{BASE_URL}/emr/call",
+        data=urllib.parse.urlencode({"visit_id": "invalid-uuid"}).encode('utf-8'),
+        headers={"X-Requested-With": "XMLHttpRequest"},
+        method="POST"
+    )
+    try:
+        doc_opener.open(req_bad)
+        raise AssertionError("Expected 400 Bad Request for invalid UUID, got success")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400, f"Expected 400, got {e.code}"
+        print(f"   -> Call patient with invalid UUID correctly rejected with HTTP 400.")
+
+    # Call patient with valid waiting visit
+    req_call = urllib.request.Request(
+        f"{BASE_URL}/emr/call",
+        data=urllib.parse.urlencode({"visit_id": waiting_id}).encode('utf-8'),
+        headers={"X-Requested-With": "XMLHttpRequest"},
+        method="POST"
+    )
+    with doc_opener.open(req_call) as resp:
+        assert resp.status == 200, f"Expected 200, got {resp.status}"
+        data = json.loads(resp.read().decode('utf-8'))
+        assert data["status"] == "success", f"Expected success status, got {data}"
+        assert data["queue_status"] == "CALLED", f"Expected CALLED queue status, got {data}"
+        print(f"   -> Patient {waiting_id} called successfully (queue_status: CALLED).")
+
+# 13. Test Doctor EMR Clinical SOAP Consultation View
+def test_doctor_emr_consult_page():
+    # Find a CALLED or WAITING visit
+    cmd = [
+        "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
+        "-c", "SELECT id, patient_id FROM visits WHERE queue_status IN ('CALLED', 'WAITING') ORDER BY queue_number ASC LIMIT 1;"
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    row = res.stdout.strip()
+    if not row:
+        test_queue_api()
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        row = res.stdout.strip()
+
+    visit_id, patient_id = row.split('|')
+
+    # Get patient MRN to assert in banner
+    cmd_mrn = [
+        "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
+        "-c", f"SELECT COALESCE(mrn, medical_record_number) FROM patients WHERE id = {patient_id};"
+    ]
+    mrn = subprocess.run(cmd_mrn, capture_output=True, text=True).stdout.strip()
+
+    # Request consultation desk
+    req_consult = urllib.request.Request(f"{BASE_URL}/emr/consult/{visit_id}")
+    with doc_opener.open(req_consult) as resp:
+        assert resp.status == 200, f"Expected 200, got {resp.status}"
+        html = resp.read().decode('utf-8')
+        assert "Konsultasi Klinis" in html or "Clinical Consultation" in html or "SOAP" in html
+        assert mrn in html, f"Patient MRN {mrn} not found in consult page banner"
+        assert 'id="primary_icd10_code"' in html, "ICD-10 primary select element not found"
+        assert 'id="subjective_complaints"' in html, "Subjective complaints textarea not found"
+        assert 'id="prescription-table"' in html, "Prescription table not found"
+        print(f"   -> Clinical SOAP consultation page rendered with patient MRN {mrn} and ICD-10 selector.")
+
+    # Verify visit transitioned to IN_CONSULTATION
+    cmd_status = [
+        "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
+        "-c", f"SELECT queue_status FROM visits WHERE id = '{visit_id}';"
+    ]
+    status = subprocess.run(cmd_status, capture_output=True, text=True).stdout.strip()
+    assert status == "IN_CONSULTATION", f"Expected queue_status IN_CONSULTATION, got {status}"
+    print(f"   -> Visit {visit_id} automatically transitioned to IN_CONSULTATION.")
+
+# 14. Test Doctor EMR Finalize & Digital Record Locking
+def test_doctor_emr_finalize_and_lock():
     # Retrieve a visit ready for consultation
     cmd = [
         "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
-        "-c", "SELECT id, patient_id, doctor_id FROM visits WHERE queue_status = 'WAITING' LIMIT 1;"
+        "-c", "SELECT id, patient_id, doctor_id FROM visits WHERE queue_status IN ('IN_CONSULTATION', 'CALLED', 'WAITING') LIMIT 1;"
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     visit_row = res.stdout.strip()
@@ -292,7 +390,8 @@ def test_emr_ajax_save():
         "assessment_notes": "Essential (primary) hypertension, Stage 1.",
         "plan_therapy": "Prescribe ACE inhibitor (Lisinopril 10mg once daily) and counsel dietary DASH protocol.",
         "prescriptions": [
-            {"drug_name": "Lisinopril", "strength": "10mg", "qty": 30, "dosage": "1 tablet daily"}
+            {"drug_name": "Lisinopril", "strength": "10mg", "qty": 30, "dosage": "1 tablet daily"},
+            {"drug_name": "Paracetamol", "strength": "500mg", "qty": 10, "dosage": "3x1 tablet as needed"}
         ]
     }
 
@@ -319,6 +418,17 @@ def test_emr_ajax_save():
     status, is_locked, icd = res_v.stdout.strip().split("|")
     assert status == "COMPLETED" and is_locked == "t" and icd == "I10"
     print(f"   -> DB Verification: Visit status={status}, EMR is_locked={is_locked}, ICD={icd}")
+
+    # Verify HIPAA Audit Log insertion
+    cmd_audit = [
+        "docker", "compose", "exec", "db", "psql", "-U", "ci_user", "-d", "ci_hospital", "-t", "-A",
+        "-c", f"SELECT action, table_name FROM audit_logs WHERE record_id = '{record_id}' ORDER BY created_at DESC LIMIT 1;"
+    ]
+    res_audit = subprocess.run(cmd_audit, capture_output=True, text=True)
+    audit_row = res_audit.stdout.strip()
+    assert "INSERT" in audit_row and "medical_records" in audit_row, f"Expected INSERT on medical_records in audit_logs, got: {audit_row}"
+    print(f"   -> HIPAA Audit Verification: Confirmed INSERT action logged for medical_records.")
+
 
 # 12. Test Third-Party Bridging Integration & PostgreSQL api_logs
 def test_bridging_api_logs():
@@ -401,8 +511,11 @@ if __name__ == "__main__":
         ("Doctors Directory Page", test_doctors_directory),
         ("HMVC Polyclinic Queue API & Advisory Locking", test_queue_api),
         ("RBAC Hook: Doctor Forbidden on Restricted Resource", test_rbac_doctor_forbidden),
+        ("Doctor EMR Queue Page & Live Polyclinic Desk", test_doctor_emr_queue_page),
+        ("Doctor EMR Patient Call Action (AJAX)", test_doctor_emr_call_patient),
+        ("Doctor EMR Clinical SOAP Consultation View", test_doctor_emr_consult_page),
+        ("Doctor EMR Finalize & Digital Record Locking", test_doctor_emr_finalize_and_lock),
         ("DataTables Server-Side Engine (PostgreSQL ILIKE)", test_datatables_serverside),
-        ("EMR AJAX Submission & Digital Record Locking", test_emr_ajax_save),
         ("Third-Party Bridging Integration & PostgreSQL api_logs", test_bridging_api_logs),
         ("CLI Background Job & Execution Guards", test_cli_surgery_reminder),
         ("Logout & Protected Route Guards", test_logout_and_protection),
