@@ -21,6 +21,266 @@ class Emr extends MY_Controller {
     }
 
     /**
+     * Polyclinic Waiting Queue UI for Attending Doctor
+     * URI: GET /emr
+     */
+    public function index(): void {
+        if (!$this->session->userdata('isLoggedIn')) {
+            redirect('login');
+            return;
+        }
+
+        // 1. Identify active doctor (from session id/user_id, doctor_id, or doctors table)
+        $user_id   = $this->session->userdata('id');
+        $user_name = $this->session->userdata('name');
+        $doctor    = null;
+
+        if ($this->session->userdata('doctor_id')) {
+            $doctor = $this->db->get_where('doctors', ['id' => (int)$this->session->userdata('doctor_id')])->row_array();
+        }
+        if (!$doctor && $user_id) {
+            $doctor = $this->db->get_where('doctors', ['user_id' => (int)$user_id])->row_array();
+        }
+        if (!$doctor && $user_name) {
+            $doctor = $this->db->get_where('doctors', ['name' => $user_name])->row_array();
+            if (!$doctor) {
+                $doctor = $this->db->get_where('doctors', ['full_name' => $user_name])->row_array();
+            }
+        }
+        if (!$doctor) {
+            $doctor = $this->db->order_by('id', 'ASC')->get_where('doctors', ['is_active' => TRUE])->row_array();
+        }
+        if (!$doctor) {
+            $doctor = $this->db->order_by('id', 'ASC')->get('doctors')->row_array();
+        }
+
+        if ($doctor && !$this->session->userdata('doctor_id')) {
+            $this->session->set_userdata('doctor_id', $doctor['id']);
+        }
+
+        $doctor_id = $doctor ? (int)$doctor['id'] : null;
+        $today     = date('Y-m-d');
+
+        // 2. Resolve polyclinic associated with this doctor or active visits
+        $polyclinic = null;
+        if ($doctor_id) {
+            $poly_visit = $this->db->select('poly.*')
+                ->from('visits v')
+                ->join('polyclinics poly', 'poly.id = v.polyclinic_id', 'INNER')
+                ->where('v.visit_date', $today)
+                ->where('v.doctor_id', $doctor_id)
+                ->limit(1)
+                ->get()->row_array();
+            if ($poly_visit) {
+                $polyclinic = $poly_visit;
+            }
+        }
+        if (!$polyclinic && $doctor && !empty($doctor['specialization'])) {
+            $polyclinic = $this->db->like('name', $doctor['specialization'], 'both')
+                ->where('is_active', TRUE)
+                ->get('polyclinics')->row_array();
+        }
+        if (!$polyclinic) {
+            $polyclinic = $this->db->order_by('name', 'ASC')->get_where('polyclinics', ['is_active' => TRUE])->row_array();
+        }
+
+        // 3. Fetch today's visits for this doctor/polyclinic where queue_status IN ('WAITING', 'CALLED', 'IN_CONSULTATION') sorted by queue_number ASC
+        $this->db->select('v.id, v.visit_number, v.queue_number, v.queue_status, v.billing_status, v.check_in_time, ' .
+                          'v.patient_id, v.polyclinic_id, v.doctor_id, v.visit_date, ' .
+                          'COALESCE(p.full_name, p.name) AS patient_name, ' .
+                          'COALESCE(p.mrn, p.medical_record_number) AS medical_record_number, ' .
+                          'p.name, p.gender, p.date_of_birth, p.blood_type, ' .
+                          'poly.name AS polyclinic_name, d.name AS doctor_name');
+        $this->db->from('visits v');
+        $this->db->join('patients p', 'p.id = v.patient_id', 'INNER');
+        $this->db->join('polyclinics poly', 'poly.id = v.polyclinic_id', 'LEFT');
+        $this->db->join('doctors d', 'd.id = v.doctor_id', 'LEFT');
+        $this->db->where('v.visit_date', $today);
+        if ($doctor_id) {
+            $this->db->where('v.doctor_id', $doctor_id);
+        }
+        $this->db->where_in('v.queue_status', ['WAITING', 'CALLED', 'IN_CONSULTATION']);
+        $this->db->order_by('v.queue_number', 'ASC');
+        $visits = $this->db->get()->result_array();
+
+        $data = [
+            'doctor'          => $doctor,
+            'polyclinic'      => $polyclinic,
+            'visits'          => $visits,
+            'csrf_token_name' => $this->security->get_csrf_token_name(),
+            'csrf_hash'       => $this->security->get_csrf_hash()
+        ];
+
+        if (file_exists(APPPATH . 'views/emr/queue.php')) {
+            $this->load->view('emr/queue', $data);
+        } else {
+            $this->output->set_content_type('text/html')->set_output('<!-- EMR Queue View -->');
+        }
+    }
+
+    /**
+     * AJAX Endpoint: Advance Patient Queue State to CALLED
+     * URI: POST /emr/call
+     */
+    public function call_patient(): void {
+        $this->output->set_content_type('application/json');
+
+        if (!$this->session->userdata('isLoggedIn')) {
+            $this->output
+                ->set_status_header(401)
+                ->set_output(json_encode([
+                    'status'  => 'error',
+                    'message' => 'Unauthorized staff session.'
+                ], JSON_UNESCAPED_UNICODE));
+            return;
+        }
+
+        $visit_id = (string)$this->input->post('visit_id', TRUE);
+        if (!$visit_id) {
+            $raw_input = json_decode($this->input->raw_input_stream, true);
+            if (is_array($raw_input) && !empty($raw_input['visit_id'])) {
+                $visit_id = trim((string)$raw_input['visit_id']);
+            }
+        }
+
+        if (empty($visit_id)) {
+            $this->output
+                ->set_status_header(400)
+                ->set_output(json_encode([
+                    'status'  => 'error',
+                    'message' => 'Visit ID is required.'
+                ], JSON_UNESCAPED_UNICODE));
+            return;
+        }
+
+        $visit = $this->db->get_where('visits', ['id' => $visit_id])->row_array();
+        if (!$visit) {
+            $this->output
+                ->set_status_header(404)
+                ->set_output(json_encode([
+                    'status'  => 'error',
+                    'message' => 'Visit not found.'
+                ], JSON_UNESCAPED_UNICODE));
+            return;
+        }
+
+        if ($visit['queue_status'] === 'COMPLETED') {
+            $this->output
+                ->set_status_header(409)
+                ->set_output(json_encode([
+                    'status'  => 'conflict',
+                    'message' => 'Patient consultation is already completed.'
+                ], JSON_UNESCAPED_UNICODE));
+            return;
+        }
+
+        if ($visit['queue_status'] === 'WAITING') {
+            $this->db->where('id', $visit_id)
+                ->where('queue_status', 'WAITING')
+                ->update('visits', [
+                    'queue_status' => 'CALLED',
+                    'updated_at'   => date('Y-m-d H:i:sP')
+                ]);
+        }
+
+        $this->output
+            ->set_status_header(200)
+            ->set_output(json_encode([
+                'status'       => 'success',
+                'message'      => 'Patient called.',
+                'queue_status' => 'CALLED',
+                'visit_id'     => $visit_id
+            ], JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * Clinical SOAP Consultation Workspace
+     * URI: GET /emr/consult/{visit_id}
+     */
+    public function consultation(string $visit_id = ''): void {
+        if (!$this->session->userdata('isLoggedIn')) {
+            redirect('login');
+            return;
+        }
+
+        $visit_id = trim($visit_id);
+        if (empty($visit_id)) {
+            $this->session->set_flashdata('error', 'Visit ID is required for consultation.');
+            redirect('emr');
+            return;
+        }
+
+        // 1. Fetch visit details joined with patients and polyclinics
+        $this->db->select('v.*, ' .
+                          'COALESCE(p.full_name, p.name) AS patient_name, ' .
+                          'COALESCE(p.mrn, p.medical_record_number) AS medical_record_number, ' .
+                          'p.name, p.date_of_birth, p.gender, p.blood_type, p.address, p.phone_number, ' .
+                          'poly.name AS polyclinic_name, poly.code AS polyclinic_code, ' .
+                          'd.name AS doctor_name, d.specialization AS doctor_specialization');
+        $this->db->from('visits v');
+        $this->db->join('patients p', 'p.id = v.patient_id', 'INNER');
+        $this->db->join('polyclinics poly', 'poly.id = v.polyclinic_id', 'LEFT');
+        $this->db->join('doctors d', 'd.id = v.doctor_id', 'LEFT');
+        $this->db->where('v.id', $visit_id);
+        $visit = $this->db->get()->row_array();
+
+        // 2. Validate visit existence
+        if (!$visit) {
+            $this->session->set_flashdata('error', 'Encounter record not found.');
+            redirect('emr');
+            return;
+        }
+
+        // 3. Prevent reopening completed consultations
+        if ($visit['queue_status'] === 'COMPLETED') {
+            $this->session->set_flashdata('error', 'This consultation encounter has already been completed.');
+            redirect('emr');
+            return;
+        }
+
+        // 4. Advance queue status to IN_CONSULTATION if WAITING or CALLED
+        if (in_array($visit['queue_status'], ['WAITING', 'CALLED'], true)) {
+            $this->db->where('id', $visit_id)->update('visits', [
+                'queue_status' => 'IN_CONSULTATION',
+                'updated_at'   => date('Y-m-d H:i:sP')
+            ]);
+            $visit['queue_status'] = 'IN_CONSULTATION';
+        }
+
+        // 5. Fetch separate patient and doctor entities for clean view binding
+        $patient    = $this->db->get_where('patients', ['id' => $visit['patient_id']])->row_array();
+        $doctor     = $this->db->get_where('doctors', ['id' => $visit['doctor_id']])->row_array();
+        $polyclinic = $this->db->get_where('polyclinics', ['id' => $visit['polyclinic_id']])->row_array();
+
+        // 6. Fetch active ICD-10 diagnostic codes
+        $icd10_list = $this->db->select('code, description_en, category')
+            ->from('icd10_codes')
+            ->where('is_active', TRUE)
+            ->order_by('code', 'ASC')
+            ->get()->result_array();
+
+        $data = [
+            'visit'           => $visit,
+            'patient'         => $patient,
+            'doctor'          => $doctor,
+            'polyclinic'      => $polyclinic,
+            'icd10_list'      => $icd10_list,
+            'csrf'            => [
+                'name' => $this->security->get_csrf_token_name(),
+                'hash' => $this->security->get_csrf_hash()
+            ],
+            'csrf_token_name' => $this->security->get_csrf_token_name(),
+            'csrf_hash'       => $this->security->get_csrf_hash()
+        ];
+
+        if (file_exists(APPPATH . 'views/emr/consult.php')) {
+            $this->load->view('emr/consult', $data);
+        } else {
+            $this->output->set_content_type('text/html')->set_output('<!-- EMR Consult View -->');
+        }
+    }
+
+    /**
      * AJAX Endpoint: Server-Side DataTables Provider for Patient EMR History
      * URI: GET /emr/data
      */
